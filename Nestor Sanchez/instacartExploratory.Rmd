@@ -24,7 +24,10 @@ src_tbls(sc)
 These files specify which products were purchased in each order.
 
 ```{r}
-dbGetQuery(sc, "SELECT * FROM order_products__prior_tbl LIMIT 10")
+dbGetQuery(sc, 
+"SELECT * 
+FROM order_products__prior_tbl 
+LIMIT 10")
 ```
  
 ## orders
@@ -35,7 +38,10 @@ This file tells to which set (prior, train, test) an order belongs.
 
 
 ```{r}
-orders_prev <- dbGetQuery(sc, "SELECT * FROM orders_tbl LIMIT 100")
+orders_prev <- dbGetQuery(sc, 
+"SELECT * 
+FROM orders_tbl 
+LIMIT 100")
 orders_prev
 ```
  
@@ -101,7 +107,6 @@ products_popularity
 ```
 
 ```{r}
-
 products_popularity %>%
   ggplot(
     aes(reorder(product_name, n_orders, function(x) x), 
@@ -142,49 +147,93 @@ products_popularity
 ## Questions
 
 * Which day of week people order most fequently?
+
 ```{r}
-
-dbGetQuery(sc,
-
-"SELECT order_dow
-,    COUNT(1) AS n_orders
-FROM orders_tbl
-GROUP BY order_dow
-ORDER BY n_orders DESC")
+ex1 <- "select order_dow, count(*) as n 
+        from orders_tbl 
+        group by order_dow
+        order by count(*) desc
+        LIMIT 1"
+dbGetQuery(sc, ex1) #0 -> diumenge
 ```
-
 
 * The most popular hour of doing order? 
 ```{r}
-dbGetQuery(sc,
-
-"SELECT order_hour_of_day
-, COUNT(1) AS n_orders
-FROM orders_tbl
-GROUP BY order_hour_of_day
-ORDER BY n_orders DESC
-LIMIT 1")
+ex2 <- "select order_hour_of_day, count(*) as n 
+        from orders_tbl 
+        group by order_hour_of_day
+        order by count(*) desc
+        LIMIT 1"
+dbGetQuery(sc, ex2)
 ```
-
 
 * The most reordered products?
 ```{r}
+ex3 <- "select product_id, sum(reordered)
+        from order_products__prior_tbl
+        group by product_id
+        order by sum(reordered) desc
+        LIMIT 5"
+dbGetQuery(sc, ex3)
 
 ```
 
 * The less reorderd product?
 ```{r}
-
+ex4 <- "select product_id, sum(reordered)
+        from order_products__prior_tbl
+        group by product_id
+        order by sum(reordered)
+        LIMIT 10"
+dbGetQuery(sc, ex4)
 ```
 
 * Plot histogram of number of products in an order.
 ```{r}
+ex5 <- "select order_id, count(*)
+        from order_products__prior_tbl
+        group by order_id"
+data <- dbGetQuery(sc, ex5) 
+```
+
+```{r}
+dbGetQuery(sc, 
+"
+SELECT n_products,
+      COUNT(order_id) AS n_orders
+FROM ( 
+      SELECT order_id,
+          COUNT(1) AS n_products
+      FROM order_products__prior_tbl
+      GROUP BY order_id) op
+GROUP BY n_products
+")%>%
+  ggplot(aes(n_products, n_orders)) + 
+  geom_bar(stat = "identity") +
+  theme_minimal()
+```
+
+```{r}
 
 ```
 
-* What is the most popular department? 
-```{r}
 
+
+
+```{r}
+dbGetQuery(sc, 
+"SELECT order_id
+,   COUNT(1) AS n_products
+FROM order_products__prior_tbl
+GROUP BY order_id
+LIMIT 100
+")
+```
+
+* What is the most popular department? 
+
+```{r}
+dbGetQuery(sc, "DESC orders_tbl")
 ```
 
 
@@ -232,8 +281,19 @@ product_times_ordered_txt %>%
 
 ## Questions
 
-* For given department, plot the most popular product (with templating department).
-* For given day, rank department popularity.
+* For given department, given a list of 10 the most popular product (with templating department).
+```{r}
+dbGetQuery(sc, 
+"SELECT *
+FROM products_tbl
+limit 20") 
+```
+
+* For given day of the week, rank department popularity.
+```{r}
+
+```
+
 
 ## More on orders (Window Functions)
 
@@ -257,13 +317,117 @@ FROM orders_tbl
 WHERE user_id <= 10
 ")
 ```
+
+Per a casa usuari (agafem només usuaris fins al 10), agafem la primera ordre que va fer i la guardem a la columna first_order.
 ```{r}
 dbGetQuery(sc, 
 "SELECT user_id
 ,   order_id
-,   FIRST_VALUE(order_id)  OVER(partition by user_id ORDER BY order_number) AS first_order
+,   FIRST_VALUE(order_id)  OVER(PARTITION BY user_id ORDER BY order_number) AS first_order
 FROM orders_tbl
 WHERE user_id <= 10 
 ")
 ```
+Perquè surti només una línia per usuari:
+```{r}
+dbGetQuery(sc, 
+"SELECT distinct user_id, FIRST_VALUE(order_id) OVER(partition by user_id ORDER BY order_number) AS first_order
+FROM orders_tbl
+WHERE user_id <= 10 
+ORDER BY user_id
+")
+```
+
+
+Ara volem buscar el producte més comú en les cistelles grans:
+* Product that is usually orders in numerous baskets
+
+```{r}
+"
+SELECT product_id
+,   AVG(products_number) AS avg_products_number
+FROM (
+    SELECT order_id
+    ,   product_id
+    ,   COUNT(product_id)  OVER(partition by order_id) AS products_number
+    FROM order_products__train_tbl
+) pn
+GROUP BY product_id
+ORDER BY avg_products_number DESC
+LIMIT 100
+" %>%
+dbGetQuery(sc, .)
+```
+```{r}
+"
+SELECT product_id
+,   AVG(products_number) AS avg_products_number
+FROM (
+    SELECT order_id
+    ,   product_id
+    ,   COUNT(product_id)  OVER(partition by order_id) AS products_number
+    FROM order_products__train_tbl
+) pn
+GROUP BY product_id
+ORDER BY avg_products_number DESC
+LIMIT 100
+" %>%
+dbGetQuery(sc, .)
+```
+
+* Could modify the query and add prduct name?
+
+```{r}
+"
+SELECT pn.product_id, product_name
+,   AVG(products_number) AS avg_products_number
+FROM (
+    SELECT order_id
+    ,   product_id
+    ,   COUNT(product_id)  OVER(partition by order_id) AS products_number
+    FROM order_products__train_tbl
+) pn LEFT JOIN PRODUCTS_TBL t2 on pn.product_id=t2.product_id
+GROUP BY pn.product_id, product_name
+ORDER BY avg_products_number DESC
+LIMIT 20
+" %>%
+dbGetQuery(sc, .)
+```
+
+
+* Product that is usually orders in small baskets.
+
+* For 10 first users and all their orders find days since first order.
+
+```{r}
+orders %>%
+  filter(user_id <= 10) %>%
+  select(user_id, order_number, days_since_prior_order) %>%
+  arrange(user_id, order_number) %>%
+  mutate(days_since_first_order = cumsum(days_since_prior_order)) %>%
+  mutate(days_since_first_order=ifelse(is.null(days_since_prior_order), 0, days_since_first_order))
+```
+
+```{r}
+"SELECT user_id, 
+       days_since_prior_order,
+       COALESCE(
+            SUM(days_since_prior_order) OVER
+            (PARTITION BY user_id ORDER BY order_number ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW),
+      e) AS days_since_prior_order,
+      order_number
+FROM orders_tbl
+WHERE user id <= 10
+ORDER BY user_id,
+    order_number"%>%
+ dbGetQuery(sc, .) 
+```
+
+
+
+
+
+
+
+
 
